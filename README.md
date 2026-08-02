@@ -40,3 +40,21 @@ terraform init
 terraform plan
 terraform apply
 ```
+
+## Building & pushing the tts-generate image
+
+The Piper voice model (~63MB) lives in GCS (`${project_id}-tts-assets`
+bucket), not in git — fetch it before building:
+
+```bash
+cd src/tts-generate
+./fetch-model.sh   # downloads piper_models/*.onnx{,.json} from GCS
+gcloud auth configure-docker asia-southeast1-docker.pkg.dev --quiet
+docker buildx build --platform linux/amd64 --provenance=false \
+  -t asia-southeast1-docker.pkg.dev/tts-pipeline-yl/tts-pipeline/tts-generate:latest \
+  -f Dockerfile . --load
+docker push asia-southeast1-docker.pkg.dev/tts-pipeline-yl/tts-pipeline/tts-generate:latest
+```
+
+Then `terraform apply` in `environments/dev` again to roll the Cloud Run
+service onto the new image (bump `image_tag` if not reusing `latest`).

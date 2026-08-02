@@ -14,3 +14,12 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+
+__pycache__/
+*.pyc
+
+# Piper model binaries — lives in GCS (see environments/dev/main.tf), fetched
+# by src/tts-generate/fetch-model.sh before `docker build`. Not committed:
+# 63MB would bloat repo history forever with no way to shrink it back down.
+src/tts-generate/piper_models/*.onnx
+src/tts-generate/piper_models/*.onnx.json
