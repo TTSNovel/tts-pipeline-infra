@@ -27,6 +27,7 @@ resource "google_project_service" "apis" {
     "iam.googleapis.com",
     "iamcredentials.googleapis.com", # Workload Identity Federation
     "cloudresourcemanager.googleapis.com",
+    "texttospeech.googleapis.com", # google_tts mode
   ])
   project            = var.project_id
   service            = each.key
@@ -57,6 +58,23 @@ resource "google_storage_bucket_object" "piper_model_config" {
   name   = "piper/vi_VN-vais1000-medium.onnx.json"
   bucket = google_storage_bucket.tts_assets.name
   source = "${path.module}/../../src/tts-generate/piper_models/vi_VN-vais1000-medium.onnx.json"
+}
+
+# English voice — routes English runs (character names, brand/platform
+# names) that segment_by_language() splits out of otherwise-Vietnamese
+# text, instead of forcing them through the vi phonemizer. Same 22050Hz
+# rate as the Vietnamese voice (verified against both onnx.json files at
+# implementation time) so runs concatenate without resampling.
+resource "google_storage_bucket_object" "piper_model_en" {
+  name   = "piper/en_US-lessac-medium.onnx"
+  bucket = google_storage_bucket.tts_assets.name
+  source = "${path.module}/../../src/tts-generate/piper_models/en_US-lessac-medium.onnx"
+}
+
+resource "google_storage_bucket_object" "piper_model_en_config" {
+  name   = "piper/en_US-lessac-medium.onnx.json"
+  bucket = google_storage_bucket.tts_assets.name
+  source = "${path.module}/../../src/tts-generate/piper_models/en_US-lessac-medium.onnx.json"
 }
 
 # ── Artifact Registry (Docker images) ─────────────────────────────────────────
@@ -101,7 +119,10 @@ resource "google_cloud_run_v2_service" "tts_generate" {
       resources {
         limits = {
           cpu    = "2"
-          memory = "1Gi"
+          # 1Gi was enough for Piper alone; vieneu mode adds a ~200MB model
+          # plus gradio/librosa import overhead pulled in as vieneu's pip
+          # dependencies, so bumped for headroom.
+          memory = "2Gi"
         }
         # CPU-bound ONNX inference (confirmed on the AWS side: warm latency
         # tracks allocated CPU almost linearly) — allocate CPU only during
