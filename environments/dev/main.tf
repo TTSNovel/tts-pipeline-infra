@@ -104,6 +104,20 @@ resource "google_cloud_run_v2_service" "tts_generate" {
   project  = var.project_id
 
   template {
+    # Default concurrency (160) assumes light/IO-bound requests sharing one
+    # instance's CPU fine — true for piper_vi/google_tts, but measured false
+    # for vieneu: a single request already drives ~2.8 cores of parallel
+    # onnxruntime work (see main.py), more than this instance's whole "2"
+    # cpu limit. At the old default, a burst of concurrent requests (the
+    # extension's read-aloud prefetch fires up to 10 at once) all piled onto
+    # ONE instance's 2 vCPU instead of Cloud Run spinning up more instances
+    # — observed live as per-request synth time ballooning from ~5s to ~54s
+    # as the backlog grew. Set to 1 so each instance handles one request at
+    # a time and gets its full CPU budget; max_instance_count raised below
+    # so a 10-request prefetch burst can actually get 10 parallel instances
+    # instead of queuing.
+    max_instance_request_concurrency = 1
+
     containers {
       image = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.tts_pipeline.repository_id}/tts-generate:${var.image_tag}"
 
@@ -134,8 +148,8 @@ resource "google_cloud_run_v2_service" "tts_generate" {
     }
 
     scaling {
-      min_instance_count = 0 # scale to zero — no idle cost
-      max_instance_count = 3
+      min_instance_count = 0  # scale to zero — no idle cost
+      max_instance_count = 10 # matches the extension's PRELOAD_AHEAD burst size
     }
 
     timeout = "25s" # match the AWS deployment's Lambda timeout
