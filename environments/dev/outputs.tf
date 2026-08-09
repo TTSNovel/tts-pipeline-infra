@@ -6,3 +6,8 @@ output "tts_generate_url" {
 output "artifact_registry_repo" {
   value = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.tts_pipeline.repository_id}"
 }
+
+output "novel_web_url" {
+  value       = google_cloud_run_v2_service.novel_web.uri
+  description = "Public reading site (behind HTTP Basic Auth)"
+}
