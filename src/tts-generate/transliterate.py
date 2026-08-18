@@ -1,25 +1,34 @@
 """English -> Vietnamese-orthography phonetic respelling (mode: piper_vi_translit).
 
-Uses Piper's already-bundled espeak-ng English (en-us) phonemizer to get
-real IPA phonemes for an English word, then maps IPA -> a rough
-Vietnamese-spelling approximation via a static table, so the word can be
-read by the SAME Vietnamese Piper voice instead of switching to a
-different voice — fixes the jarring voice-swap in piper_vi_en mode, at the
-cost of pronunciation fidelity. This is a best-effort v1: Vietnamese
-doesn't have exact equivalents for several English phonemes (æ, ʌ, ə, θ,
-ð, ʃ, ʒ...), so the mapping is nearest-sound, not phonetically precise.
+Uses vietnormalizer's curated English/loanword dictionary (17.7K entries:
+brand names, tech terms, common vocabulary) for known words, falling back to
+its rule-based english_to_vietnamese() — pure orthographic regex rules, no
+phonemizer involved — for anything not in the dictionary. Replaces the
+previous espeak-IPA-based approach (same GCS auto-cache as before, now keyed
+on vietnormalizer's output instead of the homegrown IPA table's); dropped
+the piper.phonemize_espeak dependency this mode no longer needs.
 
-Auto-caches word -> respelling in GCS (NOT a hand-curated dictionary) —
-new words are transliterated on first encounter and written back, giving
-visibility into what's been auto-generated without anyone maintaining a
-dictionary by hand.
+Deliberately calls vietnormalizer.transliterator.english_to_vietnamese()
+directly, NOT vietnormalizer.transliterate_word() / VietnameseNormalizer —
+both of those gate on vietnormalizer's own is_vietnamese_word(), a pure
+phonotactic-shape heuristic with no sentence context (e.g. "long" is both a
+legal Vietnamese syllable and an English word; that gate always resolves it
+to Vietnamese regardless of which one it actually is in context — confirmed
+by vietnormalizer's own dictionary separately mapping "long" -> "lon", which
+its gate then never lets fire). lang_segment.segment_by_language already
+resolved this run as English using neighbor-inherited sentence context,
+which is strictly more accurate for exactly these collision cases (measured
+54% collision rate for short bare-Latin tokens, see lang_segment.py) —
+re-running vietnormalizer's own gate here would silently override that
+better decision with a worse one.
 """
+import csv
 import json
 import logging
 import os
 import re
 
-from piper.phonemize_espeak import ESPEAK_DATA_DIR, EspeakPhonemizer
+from vietnormalizer.transliterator import english_to_vietnamese
 
 try:
     from google.cloud import storage
@@ -31,94 +40,25 @@ logger = logging.getLogger(__name__)
 _CACHE_BUCKET = os.environ.get("TTS_ASSETS_BUCKET", "tts-pipeline-yl-tts-assets")
 _CACHE_BLOB = "transliteration_cache.json"
 
-# IPA (espeak-ng en-us output) -> Vietnamese-orthography approximation.
-# Longer symbols (diphthongs, affricates) must be checked before their
-# component single symbols — see _phonemes_to_vi_spelling.
-_IPA_TO_VI = {
-    # affricates / diphthongs (multi-symbol — matched greedily first)
-    "tʃ": "ch", "dʒ": "gi",
-    "eɪ": "ây", "aɪ": "ai", "aʊ": "ao", "ɔɪ": "oi", "oʊ": "ô",
-    # consonants
-    "p": "p", "b": "b", "t": "t", "d": "đ", "k": "c", "ɡ": "g", "g": "g",
-    "f": "ph", "v": "v", "s": "s", "z": "d", "h": "h",
-    "m": "m", "n": "n", "ŋ": "ng", "l": "l", "ɹ": "r", "r": "r", "ɾ": "r",
-    "θ": "th", "ð": "đ", "ʃ": "s", "ʒ": "d",
-    "j": "i", "w": "u",
-    # vowels
-    "i": "i", "ɪ": "i",
-    "e": "ê", "ɛ": "e",
-    "æ": "e", "a": "a", "ɑ": "a",
-    "ʌ": "ă", "ə": "ơ", "ɜ": "ơ", "ᵻ": "ơ", "ɐ": "ơ",
-    "ɔ": "o",
-    "ʊ": "u", "u": "u",
-    # stress/length markers — dropped (Vietnamese tone marks are a
-    # different dimension, not applied here in this v1)
-    "ˈ": "", "ˌ": "", "ː": "",
-}
-_IPA_KEYS_BY_LEN = sorted(_IPA_TO_VI, key=len, reverse=True)
-
-# Which mapped pieces count as a syllable nucleus (vowel) — used to insert
-# syllable-boundary spaces below. Vietnamese orthography is written ONE
-# SPACE-SEPARATED TOKEN PER SYLLABLE (e.g. "Việt Nam" = 2 tokens) — Piper's
-# vi phonemizer expects that shape. Concatenating a whole English word's
-# mapped phonemes into a single unbroken token (e.g. "phulmerơl" for
-# "Fullmetal") produces a "word" that doesn't match any real Vietnamese
-# syllable, so the phonemizer has to fall back to some generic guess for
-# it — which can end up sounding barely different from just feeding it the
-# raw untransliterated English word. Splitting into syllable-shaped,
-# space-separated chunks is what actually lets the vi voice read it as
-# Vietnamese-style speech instead of another unrecognized blob.
-_VOWEL_PIECES = {"i", "ê", "e", "a", "ă", "ơ", "o", "ô", "u", "ai", "ao", "oi", "ây"}
+_dictionary = None
 
 
-def _phonemes_to_vi_spelling(phoneme_str):
-    """Greedy longest-match over the concatenated phoneme string (espeak
-    emits one symbol per list element, but multi-char IPA symbols like
-    affricates/diphthongs may span what we treat as separate elements —
-    matching against the joined string with longest-symbol-first handles
-    both cases uniformly), then grouped into syllable-shaped, space-
-    separated chunks: a syllable closes right after its vowel nucleus, so
-    a run of onset consonants attaches to the vowel that follows them, and
-    any consonant(s) left after the last vowel attach to the final
-    syllable as a coda — a rough approximation of Vietnamese syllable
-    shape, not a precise English-syllabification algorithm."""
-    pieces = []
-    i = 0
-    while i < len(phoneme_str):
-        for key in _IPA_KEYS_BY_LEN:
-            if phoneme_str.startswith(key, i):
-                mapped = _IPA_TO_VI[key]
-                if mapped:
-                    pieces.append(mapped)
-                i += len(key)
-                break
-        else:
-            i += 1  # unmapped symbol — drop it rather than crash
+def _get_dictionary():
+    """vietnormalizer's curated English/loanword -> Vietnamese-spelling
+    dictionary, read straight from its bundled CSV rather than via
+    VietnameseNormalizer/VietnameseTextProcessor — skips compiling that
+    class's number/date/currency/acronym regexes, which this mode never
+    uses and which cold-start latency here can't afford for free."""
+    global _dictionary
+    if _dictionary is None:
+        import vietnormalizer
 
-    syllables = []
-    current = ""
-    for piece in pieces:
-        current += piece
-        if piece in _VOWEL_PIECES:
-            syllables.append(current)
-            current = ""
-    if current:
-        if syllables:
-            syllables[-1] += current  # trailing consonant(s) -> coda of last syllable
-        else:
-            syllables.append(current)  # no vowel found at all — keep as-is
-
-    return " ".join(syllables)
-
-
-_phonemizer = None
-
-
-def _get_phonemizer():
-    global _phonemizer
-    if _phonemizer is None:
-        _phonemizer = EspeakPhonemizer(ESPEAK_DATA_DIR)
-    return _phonemizer
+        data_dir = os.path.join(os.path.dirname(vietnormalizer.__file__), "data")
+        _dictionary = {}
+        with open(os.path.join(data_dir, "non-vietnamese-words.csv"), encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                _dictionary[row["original"].strip().lower()] = row["transliteration"].strip()
+    return _dictionary
 
 
 _cache = None
@@ -159,7 +99,8 @@ def _flush_cache():
 
 def transliterate_word(word):
     """Vietnamese-orthography approximation of one English word's
-    pronunciation, via espeak-ng phonemes -> IPA->VI table. Leading/
+    pronunciation: a vietnormalizer dictionary hit if it has one curated,
+    else its rule-based english_to_vietnamese() fallback. Leading/
     trailing punctuation is preserved around the respelled core so
     Piper's vi voice still gets sentence-prosody cues (pauses on commas
     etc.) instead of losing them."""
@@ -176,9 +117,15 @@ def transliterate_word(word):
     if key in _cache:
         spelling = _cache[key]
     else:
-        phoneme_groups = _get_phonemizer().phonemize("en-us", core)
-        phoneme_str = "".join(p for group in phoneme_groups for p in group)
-        spelling = _phonemes_to_vi_spelling(phoneme_str) or core
+        spelling = _get_dictionary().get(key) or english_to_vietnamese(core) or core
+        # vietnormalizer joins syllables with hyphens ("mê-lít-xa"), but
+        # Piper's vi phonemizer expects one SPACE-separated token per
+        # syllable to recognize each as a real Vietnamese syllable — a
+        # hyphen-glued blob gets treated as one unrecognized "word" and
+        # falls back to a generic, IPA-ish phonemization instead of clean
+        # per-syllable Vietnamese pronunciation (confirmed by ear: "mê-lít-xa"
+        # vs "mê lít xa" through the same vi voice sound audibly different).
+        spelling = spelling.replace("-", " ")
         _cache[key] = spelling
         _cache_dirty = True
 

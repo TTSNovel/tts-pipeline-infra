@@ -3,6 +3,7 @@ flask-cors==5.0.0
 gunicorn==23.0.0
 piper-tts==1.4.2
 soundfile
+vietnormalizer==0.2.3
 google-cloud-texttospeech==2.37.0
 google-cloud-storage==2.19.0
 vieneu==3.2.4
