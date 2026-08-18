@@ -313,6 +313,25 @@ resource "google_cloud_run_v2_service" "novel_web" {
   template {
     execution_environment = "EXECUTION_ENVIRONMENT_GEN2" # required for GCS volume mounts
 
+    # Previously unset here, which left Cloud Run's default of 80 in place —
+    # a number nobody ever measured against this app, unlike tts_generate's
+    # deliberately-tuned max_instance_request_concurrency above. The actual
+    # in-process capacity is gunicorn's own `--workers 2 --threads 4` in
+    # Dockerfile (2*4 = 8 requests truly served at once); anything beyond
+    # that just queues inside the container, invisible to Cloud Run's own
+    # scaling signal since it never gets near the stale 80 threshold. Live
+    # incident: a burst of concurrent gwen_tts /api/tts calls (each blocking
+    # a worker/thread for up to 180s waiting on tts_gpu, see tts_proxy() in
+    # server.py) drove every route on novel-web — /login, chapter pages,
+    # /api/progress — to stall for up to ~80s, all on a SINGLE instance the
+    # whole time (confirmed via `gcloud logging read` during the incident:
+    # one instanceId for all 283 requests in the 9-minute window), because
+    # Cloud Run never saw enough concurrent load to justify scaling out.
+    # Setting this to the real number (8) makes Cloud Run actually spin up
+    # additional instances once one fills up, instead of silently queueing
+    # everything onto the one instance it thinks still has headroom.
+    max_instance_request_concurrency = 8
+
     volumes {
       name = "site-bucket"
       gcs {
@@ -375,8 +394,15 @@ resource "google_cloud_run_v2_service" "novel_web" {
     }
 
     scaling {
-      min_instance_count = 0 # scale to zero — no idle cost
-      max_instance_count = 3 # low-traffic personal site behind auth
+      min_instance_count = 0  # scale to zero — no idle cost
+      # Was 3 — with the corrected concurrency=8 above, 3 instances only
+      # gives 24 concurrent request slots total, still not much headroom
+      # once a handful of slow gwen_tts proxy calls (each holding a slot up
+      # to 180s) are in flight alongside ordinary page/chapter traffic.
+      # Raised so scaling out actually has room to work; still scale-to-
+      # zero when idle, so this only costs anything under real concurrent
+      # load, not just by being a bigger number.
+      max_instance_count = 10
     }
 
     # 900s: not just a live TTS proxy call (60s would cover that alone) —
