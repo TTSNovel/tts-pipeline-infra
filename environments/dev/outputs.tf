@@ -11,3 +11,8 @@ output "novel_web_url" {
   value       = google_cloud_run_v2_service.novel_web.uri
   description = "Public reading site (behind HTTP Basic Auth)"
 }
+
+output "tts_gpu_url" {
+  value       = google_cloud_run_v2_service.tts_gpu.uri
+  description = "gwen-tts (GPU) Cloud Run endpoint"
+}

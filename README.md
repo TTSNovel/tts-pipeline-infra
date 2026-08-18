@@ -58,3 +58,24 @@ docker push asia-southeast1-docker.pkg.dev/tts-pipeline-yl/tts-pipeline/tts-gene
 
 Then `terraform apply` in `environments/dev` again to roll the Cloud Run
 service onto the new image (bump `image_tag` if not reusing `latest`).
+
+## Building & pushing the tts-gpu image
+
+gwen-tts (Qwen3-TTS-0.6B Vietnamese voice-clone finetune), GPU-backed,
+separate Cloud Run service from tts-generate (see `src/tts-gpu/main.py`
+for why). The CUDA/torch image is too slow to cross-build via
+`docker buildx --platform linux/amd64` QEMU emulation from an arm64 Mac,
+so this one builds natively on Cloud Build instead:
+
+```bash
+cd src/tts-gpu
+./fetch-model.sh   # pulls gwen-tts's built-in reference speakers from GitHub into gwen_data/
+gcloud builds submit --project=tts-pipeline-yl --region=asia-southeast1 \
+  --tag=asia-southeast1-docker.pkg.dev/tts-pipeline-yl/tts-pipeline/tts-gpu:latest \
+  --timeout=1800s --machine-type=e2-highcpu-8 .
+```
+
+Then `terraform apply` in `environments/dev` to roll the Cloud Run GPU
+service onto the new image. First deploy of an `nvidia-l4` (no zonal
+redundancy) service auto-grants 3 GPUs of quota in-region — no manual
+quota request needed for this tier.

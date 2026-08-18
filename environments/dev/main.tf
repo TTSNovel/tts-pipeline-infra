@@ -32,6 +32,7 @@ resource "google_project_service" "apis" {
     "iamcredentials.googleapis.com", # Workload Identity Federation
     "cloudresourcemanager.googleapis.com",
     "texttospeech.googleapis.com", # google_tts mode
+    "cloudbuild.googleapis.com",   # gcloud builds submit (tts-gpu's CUDA image is too slow to buildx/emulate locally on arm64)
   ])
   project            = var.project_id
   service            = each.key
@@ -97,6 +98,18 @@ resource "google_artifact_registry_repository" "tts_pipeline" {
   }
 
   depends_on = [google_project_service.apis]
+}
+
+# Cloud Build (gcloud builds submit, used for tts-gpu's CUDA image — see
+# src/tts-gpu/README note) runs as the project's default Compute Engine
+# service account, not the legacy cloudbuild.gserviceaccount.com identity,
+# which otherwise can't push the built image here.
+resource "google_artifact_registry_repository_iam_member" "tts_pipeline_cloudbuild_writer" {
+  project    = var.project_id
+  location   = google_artifact_registry_repository.tts_pipeline.location
+  repository = google_artifact_registry_repository.tts_pipeline.repository_id
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
 # ── Cloud Run (tts-generate) ──────────────────────────────────────────────────
@@ -169,6 +182,91 @@ resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
   role     = "roles/run.invoker"
   # Public endpoint — same posture as the AWS deployment: no IAM-level auth,
   # the app itself checks x-tts-secret on every request.
+  member = "allUsers"
+}
+
+# ── Cloud Run (tts-gpu) ────────────────────────────────────────────────────
+# gwen-tts (Qwen3-TTS-0.6B finetune), Vietnamese voice cloning — a separate
+# service from tts-generate rather than a new MODELS entry there, because
+# attaching a GPU forces GPU billing/sizing (min 4 CPU / 16Gi mem,
+# instance-based billing — no cpu_idle) onto the WHOLE service, which would
+# make every cheap piper_vi/google_tts request pay GPU-instance pricing if
+# they shared one. See src/tts-gpu/main.py.
+resource "google_cloud_run_v2_service" "tts_gpu" {
+  name     = "tts-gpu"
+  location = var.region
+  project  = var.project_id
+
+  template {
+    # nvidia-l4 with zonal redundancy OFF is the variant GCP auto-grants 3
+    # units of on first use, no manual quota request needed — the zonal-
+    # redundant variant requires an explicit quota increase. A personal
+    # reading-site backend doesn't need multi-zone HA for this.
+    gpu_zonal_redundancy_disabled = true
+
+    node_selector {
+      accelerator = "nvidia-l4"
+    }
+
+    # One GPU per instance — one request at a time per instance, same
+    # reasoning as tts_generate's vieneu concurrency fix above, just
+    # inherent here (only one GPU to share, not a tunable trade-off).
+    max_instance_request_concurrency = 1
+
+    containers {
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.tts_pipeline.repository_id}/tts-gpu:${var.image_tag}"
+
+      ports {
+        container_port = 8080
+      }
+
+      env {
+        name  = "TTS_API_SECRET"
+        value = var.tts_api_secret
+      }
+
+      resources {
+        limits = {
+          cpu              = "4"
+          memory           = "16Gi"
+          "nvidia.com/gpu" = "1"
+        }
+        # GPU services require instance-based billing (CPU always
+        # allocated) — cpu_idle=true (request-based) isn't supported here.
+        cpu_idle = false
+      }
+    }
+
+    scaling {
+      min_instance_count = 0 # scale to zero — no idle GPU cost
+      # reader.js prefetches PRELOAD_AHEAD=6 sentences concurrently — set to
+      # 6 to match, though actual scaling is capped by whatever the L4
+      # no-zonal-redundancy quota is at any given time (auto-granted 3,
+      # increase to 6 requested via `gcloud alpha quotas preferences
+      # create` and pending Google's approval as of this change; excess
+      # concurrent requests beyond the granted quota just queue longer,
+      # they don't hard-fail).
+      max_instance_count = 6
+    }
+
+    # Generative (autoregressive) synthesis on a 0.6B transformer is much
+    # slower than Piper's ONNX vocoder — measured ~0.4-0.5s/char with no
+    # flash-attn (sdpa fallback) on an L4, so reader.js's 150-char max
+    # chunk plus a cold model load (~12s) can approach 90-100s. 180s gives
+    # headroom without reaching novel_web's 900s import-job ceiling.
+    timeout = "180s"
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "tts_gpu_public_invoker" {
+  project  = var.project_id
+  location = google_cloud_run_v2_service.tts_gpu.location
+  name     = google_cloud_run_v2_service.tts_gpu.name
+  role     = "roles/run.invoker"
+  # Same posture as tts_generate — public at the network level, gated by
+  # the app's own x-tts-secret check.
   member = "allUsers"
 }
 
@@ -254,6 +352,10 @@ resource "google_cloud_run_v2_service" "novel_web" {
       env {
         name  = "TTS_API_URL"
         value = google_cloud_run_v2_service.tts_generate.uri
+      }
+      env {
+        name  = "GPU_TTS_API_URL"
+        value = google_cloud_run_v2_service.tts_gpu.uri
       }
       env {
         name  = "TTS_API_SECRET"
