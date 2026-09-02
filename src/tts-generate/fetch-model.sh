@@ -6,7 +6,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-BUCKET="${TF_VAR_project_id:-tts-pipeline-yl}-tts-assets"
+: "${TF_VAR_project_id:?TF_VAR_project_id not set — see .envrc}"
+BUCKET="${TF_VAR_project_id}-tts-assets"
 
 mkdir -p piper_models
 for voice in vi_VN-vais1000-medium en_US-lessac-medium; do

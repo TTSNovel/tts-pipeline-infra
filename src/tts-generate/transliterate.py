@@ -37,7 +37,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-_CACHE_BUCKET = os.environ.get("TTS_ASSETS_BUCKET", "tts-pipeline-yl-tts-assets")
+# No hardcoded fallback — an unset TTS_ASSETS_BUCKET just disables the GCS
+# cache below (best-effort already, see _load_cache/_flush_cache) rather than
+# silently pointing at a specific personal bucket.
+_CACHE_BUCKET = os.environ.get("TTS_ASSETS_BUCKET")
 _CACHE_BLOB = "transliteration_cache.json"
 
 _dictionary = None
@@ -66,7 +69,7 @@ _cache_dirty = False
 
 
 def _load_cache():
-    if storage is None:
+    if storage is None or _CACHE_BUCKET is None:
         return {}
     try:
         client = storage.Client()
@@ -83,7 +86,7 @@ def _flush_cache():
     transliterate_text(), not on every transliterate_word() call, so a
     sentence with several new words costs one GCS write, not several."""
     global _cache_dirty
-    if not _cache_dirty or storage is None:
+    if not _cache_dirty or storage is None or _CACHE_BUCKET is None:
         return
     try:
         client = storage.Client()

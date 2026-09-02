@@ -1,5 +1,5 @@
 ##############################################################################
-# environments/dev/main.tf — Day-2 infra for tts-pipeline-yl (dev)
+# environments/dev/main.tf — Day-2 infra (dev)
 ##############################################################################
 
 terraform {
@@ -7,8 +7,10 @@ terraform {
   required_providers {
     google = { source = "hashicorp/google", version = ">= 5.0" }
   }
+  # bucket intentionally omitted (partial backend config) — the state bucket
+  # name is project-specific, not committed. Run:
+  #   terraform init -backend-config="bucket=${TF_VAR_project_id}-terraform-state"
   backend "gcs" {
-    bucket = "tts-pipeline-yl-terraform-state"
     prefix = "dev"
   }
 }

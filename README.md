@@ -1,10 +1,13 @@
 # tts-pipeline-infra
 
-Terraform infra for the TTS pipeline (GCP project `tts-pipeline-yl`) backing
-the kokoro-tts-addon browser extension's quick-read feature. Separate GCP
-project, separate repo from the extension code (`kokoro-tts-addon`) and from
-the AWS test deployment (`cc-infra-workloads`) — not tied to a specific
-model/backend name, since that's already changed once (Kokoro → Piper).
+Terraform infra for the TTS pipeline backing the tts-reader-addon browser
+extension's quick-read feature. Separate GCP project, separate repo from the
+extension code (`tts-reader-addon`) and from the AWS test deployment
+(`cc-infra-workloads`) — not tied to a specific model/backend name, since
+that's already changed once (Kokoro → Piper).
+
+GCP project id is not committed — set your own via `TF_VAR_project_id` (see
+`.envrc`, gitignored).
 
 ## Layout
 
@@ -20,7 +23,7 @@ model/backend name, since that's already changed once (Kokoro → Piper).
 
 ```bash
 cd tts-pipeline-infra
-direnv allow   # auto-selects the tts-pipeline-yl GCP project (see .envrc)
+direnv allow   # loads TF_VAR_project_id and friends from .envrc (gitignored, not committed)
 gcloud auth application-default login   # one-time per machine, see project history
 ```
 
@@ -36,7 +39,7 @@ terraform apply
 
 ```bash
 cd environments/dev
-terraform init
+terraform init -backend-config="bucket=${TF_VAR_project_id}-terraform-state"
 terraform plan
 terraform apply
 ```
@@ -51,9 +54,9 @@ cd src/tts-generate
 ./fetch-model.sh   # downloads piper_models/*.onnx{,.json} from GCS
 gcloud auth configure-docker asia-southeast1-docker.pkg.dev --quiet
 docker buildx build --platform linux/amd64 --provenance=false \
-  -t asia-southeast1-docker.pkg.dev/tts-pipeline-yl/tts-pipeline/tts-generate:latest \
+  -t asia-southeast1-docker.pkg.dev/${TF_VAR_project_id}/tts-pipeline/tts-generate:latest \
   -f Dockerfile . --load
-docker push asia-southeast1-docker.pkg.dev/tts-pipeline-yl/tts-pipeline/tts-generate:latest
+docker push asia-southeast1-docker.pkg.dev/${TF_VAR_project_id}/tts-pipeline/tts-generate:latest
 ```
 
 Then `terraform apply` in `environments/dev` again to roll the Cloud Run
@@ -70,8 +73,8 @@ so this one builds natively on Cloud Build instead:
 ```bash
 cd src/tts-gpu
 ./fetch-model.sh   # pulls gwen-tts's built-in reference speakers from GitHub into gwen_data/
-gcloud builds submit --project=tts-pipeline-yl --region=asia-southeast1 \
-  --tag=asia-southeast1-docker.pkg.dev/tts-pipeline-yl/tts-pipeline/tts-gpu:latest \
+gcloud builds submit --project=${TF_VAR_project_id} --region=asia-southeast1 \
+  --tag=asia-southeast1-docker.pkg.dev/${TF_VAR_project_id}/tts-pipeline/tts-gpu:latest \
   --timeout=1800s --machine-type=e2-highcpu-8 .
 ```
 

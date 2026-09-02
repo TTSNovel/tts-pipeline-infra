@@ -1,6 +1,5 @@
 variable "project_id" {
-  type    = string
-  default = "tts-pipeline-yl"
+  type = string # set via TF_VAR_project_id (see .envrc) — no default, personal GCP project
 }
 
 variable "region" {
