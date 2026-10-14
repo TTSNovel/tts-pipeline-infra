@@ -84,6 +84,32 @@ resource "google_storage_bucket_object" "piper_model_en_config" {
   source = "${path.module}/../../src/tts-generate/piper_models/en_US-lessac-medium.onnx.json"
 }
 
+# ── SideStore source (AltStore-style repo.json feed) ─────────────────────────
+# Public-read feed + .ipa hosting for sideloading personal iOS builds
+# (WebnovelReader, etc.) through SideStore instead of Xcode-installing them
+# directly — lets SideStore auto re-sign before the 7-day free-account
+# provisioning profile expires. Objects are uploaded ad-hoc via `gcloud
+# storage cp` (same manual-deploy posture as the Docker images pushed via
+# `gcloud builds submit`, see README) rather than as google_storage_bucket_object
+# resources — the .ipa changes every build, so tracking it in Terraform state
+# would mean a plan/apply cycle per rebuild for no benefit.
+resource "google_storage_bucket" "sidestore_source" {
+  project                     = var.project_id
+  name                        = "${var.project_id}-sidestore-source"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  force_destroy               = true # small, disposable dev-build artifacts
+}
+
+resource "google_storage_bucket_iam_member" "sidestore_source_public_read" {
+  bucket = google_storage_bucket.sidestore_source.name
+  role   = "roles/storage.objectViewer"
+  # Public read — a SideStore source URL must be fetchable by the phone
+  # over the internet with no auth, same posture as the allUsers Cloud Run
+  # invokers below.
+  member = "allUsers"
+}
+
 # ── Artifact Registry (Docker images) ─────────────────────────────────────────
 resource "google_artifact_registry_repository" "tts_pipeline" {
   project       = var.project_id
