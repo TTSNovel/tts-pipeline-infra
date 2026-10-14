@@ -35,6 +35,7 @@ resource "google_project_service" "apis" {
     "cloudresourcemanager.googleapis.com",
     "texttospeech.googleapis.com", # google_tts mode
     "cloudbuild.googleapis.com",   # gcloud builds submit (tts-gpu's CUDA image is too slow to buildx/emulate locally on arm64)
+    "translate.googleapis.com",    # novel-web /api/translate (Cloud Translation v3 + per-book glossaries)
   ])
   project            = var.project_id
   service            = each.key
@@ -322,6 +323,16 @@ resource "google_storage_bucket_iam_member" "novel_web_site_rw" {
   bucket = google_storage_bucket.novel_web_site.name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+}
+
+# novel-web's /api/translate calls Cloud Translation v3 (with the book's
+# glossary, see tts-webnovel's app/translation.py) as this same default
+# compute service account. Glossaries themselves are created out-of-band by
+# tts-webnovel's tools/glossary.py from TSVs on the site bucket above.
+resource "google_project_iam_member" "novel_web_translate_user" {
+  project = var.project_id
+  role    = "roles/cloudtranslate.user"
+  member  = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
 # ── Cloud Run (novel-web) ──────────────────────────────────────────────────
