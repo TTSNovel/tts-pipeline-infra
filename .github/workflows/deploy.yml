@@ -1,0 +1,122 @@
+# Push to main → terraform apply environments/dev, then rebuild + roll
+# whichever Cloud Run images (tts-generate, tts-gpu) had source changes.
+#
+# Auth is keyless (Workload Identity Federation, environments/dev/ci.tf).
+# Repo variables: GCP_PROJECT_ID, GCP_WIF_PROVIDER, GCP_TERRAFORM_SA.
+# Repo secrets:   TTS_API_SECRET, WEB_AUTH_USER, WEB_AUTH_PASS, SESSION_SECRET.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      rebuild_images:
+        description: Rebuild and roll both images even without src/ changes
+        type: boolean
+        default: false
+
+# Never run two applies against the same state at once.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: asia-southeast1
+  TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+  TF_VAR_region: asia-southeast1
+  TF_VAR_tts_api_secret: ${{ secrets.TTS_API_SECRET }}
+  TF_VAR_web_auth_user: ${{ secrets.WEB_AUTH_USER }}
+  TF_VAR_web_auth_pass: ${{ secrets.WEB_AUTH_PASS }}
+  TF_VAR_session_secret: ${{ secrets.SESSION_SECRET }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      tts_generate: ${{ steps.filter.outputs.tts_generate == 'true' || inputs.rebuild_images == true }}
+      tts_gpu: ${{ steps.filter.outputs.tts_gpu == 'true' || inputs.rebuild_images == true }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            tts_generate:
+              - 'src/tts-generate/**'
+            tts_gpu:
+              - 'src/tts-gpu/**'
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      # The piper_model* bucket objects in main.tf are sourced from these
+      # gitignored local files — without them plan fails (or tries to delete).
+      - name: Fetch Piper models
+        run: src/tts-generate/fetch-model.sh
+      - name: terraform init
+        working-directory: environments/dev
+        run: terraform init -input=false -backend-config="bucket=${TF_VAR_project_id}-terraform-state"
+      - name: terraform apply
+        working-directory: environments/dev
+        run: terraform apply -input=false -auto-approve
+
+  tts-generate:
+    needs: [changes, terraform]
+    if: needs.changes.outputs.tts_generate == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Fetch Piper models
+        run: src/tts-generate/fetch-model.sh
+      - name: Build on Cloud Build
+        working-directory: src/tts-generate
+        run: |
+          gcloud builds submit --project="$TF_VAR_project_id" --region="$REGION" \
+            --tag="$REGION-docker.pkg.dev/$TF_VAR_project_id/tts-pipeline/tts-generate:$GITHUB_SHA" \
+            --timeout=1800s --machine-type=e2-highcpu-8 .
+      - name: Roll Cloud Run
+        run: |
+          gcloud run deploy tts-generate --project="$TF_VAR_project_id" --region="$REGION" \
+            --image="$REGION-docker.pkg.dev/$TF_VAR_project_id/tts-pipeline/tts-generate:$GITHUB_SHA"
+
+  tts-gpu:
+    needs: [changes, terraform]
+    if: needs.changes.outputs.tts_gpu == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      # CUDA/torch image — Cloud Build, same as the README's manual path.
+      - name: Build on Cloud Build
+        working-directory: src/tts-gpu
+        run: |
+          gcloud builds submit --project="$TF_VAR_project_id" --region="$REGION" \
+            --tag="$REGION-docker.pkg.dev/$TF_VAR_project_id/tts-pipeline/tts-gpu:$GITHUB_SHA" \
+            --timeout=3600s --machine-type=e2-highcpu-8 .
+      - name: Roll Cloud Run
+        run: |
+          gcloud run deploy tts-gpu --project="$TF_VAR_project_id" --region="$REGION" \
+            --image="$REGION-docker.pkg.dev/$TF_VAR_project_id/tts-pipeline/tts-gpu:$GITHUB_SHA"

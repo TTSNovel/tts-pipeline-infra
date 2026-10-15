@@ -82,3 +82,21 @@ Then `terraform apply` in `environments/dev` to roll the Cloud Run GPU
 service onto the new image. First deploy of an `nvidia-l4` (no zonal
 redundancy) service auto-grants 3 GPUs of quota in-region — no manual
 quota request needed for this tier.
+
+## CI/CD (GitHub Actions)
+
+Every push to `main` deploys automatically. Auth is keyless via Workload
+Identity Federation (`environments/dev/ci.tf`), and only pushes to `main` of
+`TTSNovel/*` repos can authenticate.
+
+| Repo | Workflow does |
+|---|---|
+| `tts-pipeline-infra` | `terraform apply`, then a Cloud Build + Cloud Run roll for `tts-generate` / `tts-gpu` if `src/<service>/` changed |
+| `tts-webnovel` | pytest → build/push `novel-web:<sha>` → `gcloud run deploy` → upload static assets to the site bucket |
+| `tts-novel-ios` | on the self-hosted Mac runner: archive + export .ipa → upload it + `repo.json` to the SideStore bucket |
+
+Cloud Run images are rolled by CI (`:<git sha>` tags), so Terraform ignores
+`image` on those services (`lifecycle.ignore_changes`).
+
+`ci.tf` was applied once by hand (this repo's own workflow needs it to log
+in at all). Changing `ci.tf` itself goes through CI like anything else.

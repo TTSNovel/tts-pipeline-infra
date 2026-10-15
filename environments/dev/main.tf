@@ -202,6 +202,13 @@ resource "google_cloud_run_v2_service" "tts_generate" {
   }
 
   depends_on = [google_project_service.apis]
+
+  # The image is rolled by CI (`gcloud run deploy --image …:<git sha>`, see
+  # each repo's .github/workflows/deploy.yml), not by Terraform — without
+  # this, every terraform apply would revert the service to :${var.image_tag}.
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image, client, client_version]
+  }
 }
 
 resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
@@ -287,6 +294,13 @@ resource "google_cloud_run_v2_service" "tts_gpu" {
   }
 
   depends_on = [google_project_service.apis]
+
+  # The image is rolled by CI (`gcloud run deploy --image …:<git sha>`, see
+  # each repo's .github/workflows/deploy.yml), not by Terraform — without
+  # this, every terraform apply would revert the service to :${var.image_tag}.
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image, client, client_version]
+  }
 }
 
 resource "google_cloud_run_v2_service_iam_member" "tts_gpu_public_invoker" {
@@ -454,6 +468,13 @@ resource "google_cloud_run_v2_service" "novel_web" {
   }
 
   depends_on = [google_project_service.apis]
+
+  # The image is rolled by CI (`gcloud run deploy --image …:<git sha>`, see
+  # each repo's .github/workflows/deploy.yml), not by Terraform — without
+  # this, every terraform apply would revert the service to :${var.image_tag}.
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image, client, client_version]
+  }
 }
 
 resource "google_cloud_run_v2_service_iam_member" "novel_web_public_invoker" {
