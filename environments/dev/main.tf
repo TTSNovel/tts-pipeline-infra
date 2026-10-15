@@ -325,13 +325,15 @@ resource "google_storage_bucket_iam_member" "novel_web_site_rw" {
   member = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
-# novel-web's /api/translate calls Cloud Translation v3 (with the book's
-# glossary, see tts-webnovel's app/translation.py) as this same default
-# compute service account. Glossaries themselves are created out-of-band by
-# tts-webnovel's tools/glossary.py from TSVs on the site bucket above.
-resource "google_project_iam_member" "novel_web_translate_user" {
+# novel-web calls Cloud Translation v3 as this same default compute service
+# account: /api/translate translates with the glossary, and /api/glossary
+# (saving the glossary edited in the reader/app) re-creates the Google
+# glossaries from TSVs it writes to the site bucket above — hence editor,
+# not just user (which can't create/delete glossaries). See tts-webnovel's
+# app/translation.py.
+resource "google_project_iam_member" "novel_web_translate_editor" {
   project = var.project_id
-  role    = "roles/cloudtranslate.user"
+  role    = "roles/cloudtranslate.editor"
   member  = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
