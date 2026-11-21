@@ -43,3 +43,11 @@ variable "session_secret" {
   type      = string
   sensitive = true
 }
+
+# Gemini API key for novel-web's Gemini translation engine — created in the
+# separate tts-gemini-free-yl project, which has no billing account, so it
+# only ever runs on the free tier. Pass via TF_VAR_gemini_api_key.
+variable "gemini_api_key" {
+  type      = string
+  sensitive = true
+}
