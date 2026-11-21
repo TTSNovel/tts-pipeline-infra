@@ -5,7 +5,8 @@
 terraform {
   required_version = ">= 1.6"
   required_providers {
-    google = { source = "hashicorp/google", version = ">= 5.0" }
+    google      = { source = "hashicorp/google", version = ">= 5.0" }
+    google-beta = { source = "hashicorp/google-beta", version = ">= 5.0" } # billing.tf quota override
   }
   # bucket intentionally omitted (partial backend config) — the state bucket
   # name is project-specific, not committed. Run:
@@ -16,6 +17,11 @@ terraform {
 }
 
 provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+provider "google-beta" {
   project = var.project_id
   region  = var.region
 }
@@ -274,7 +280,7 @@ resource "google_cloud_run_v2_service" "tts_gpu" {
     }
 
     scaling {
-      min_instance_count = 0 # scale to zero — no idle GPU cost
+      min_instance_count = 0  # scale to zero — no idle GPU cost
       # reader.js prefetches PRELOAD_AHEAD=6 sentences concurrently — set to
       # 6 to match, though actual scaling is capped by whatever the L4
       # no-zonal-redundancy quota is at any given time (auto-granted 3,
@@ -449,7 +455,7 @@ resource "google_cloud_run_v2_service" "novel_web" {
     }
 
     scaling {
-      min_instance_count = 0  # scale to zero — no idle cost
+      min_instance_count = 0 # scale to zero — no idle cost
       # Was 3 — with the corrected concurrency=8 above, 3 instances only
       # gives 24 concurrent request slots total, still not much headroom
       # once a handful of slow gwen_tts proxy calls (each holding a slot up
