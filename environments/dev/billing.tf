@@ -50,28 +50,27 @@ resource "google_project_service" "billing_apis" {
     "cloudbilling.googleapis.com",
     "monitoring.googleapis.com",
     "cloudquotas.googleapis.com",
+    "serviceusage.googleapis.com",
   ])
   project            = var.project_id
   service            = each.key
   disable_on_destroy = false
 }
 
-resource "google_cloud_quotas_quota_preference" "translate_daily_chars" {
-  parent        = "projects/${var.project_id}"
-  name          = "translate-default-per-day"
-  service       = "translate.googleapis.com"
-  quota_id      = "DefaultPerDayPerProject"
-  contact_email = var.billing_alert_email
-  justification = "Cap Cloud Translation spend for a personal reading site."
-  # The cap is below recent daily usage (1.25M chars on 2026-11-20), which
-  # the API refuses unless told it's intended.
-  ignore_safety_checks = "QUOTA_DECREASE_BELOW_USAGE"
+# Service Usage override rather than google_cloud_quotas_quota_preference:
+# going from unlimited to a cap trips two safety checks at once (>10%
+# decrease, and below recent usage — 1.25M chars on 2026-11-20) and that
+# resource can only waive one; `force` here waives both.
+resource "google_service_usage_consumer_quota_override" "translate_daily_chars" {
+  provider       = google-beta
+  project        = var.project_id
+  service        = "translate.googleapis.com"
+  metric         = urlencode("translate.googleapis.com/default")
+  limit          = urlencode("/d/project")
+  override_value = var.translate_daily_char_limit
+  force          = true
 
-  quota_config {
-    preferred_value = var.translate_daily_char_limit
-  }
-
-  depends_on = [google_project_service.apis, google_project_service.billing_apis]
+  depends_on = [google_project_service.apis]
 }
 
 resource "google_monitoring_notification_channel" "billing_alert_email" {
