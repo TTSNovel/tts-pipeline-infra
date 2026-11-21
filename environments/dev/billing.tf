@@ -33,15 +33,17 @@ variable "billing_alert_email" {
   default     = "yanglong.ph@gmail.com"
 }
 
-# Hard cap, ~3 new chapters/day: at most ~600k chars/month, i.e. at most
-# ~100k past the 500k free chars (~52,000 VND). The monthly soft cap in
-# novel-web (GOOGLE_TRANSLATE_MONTHLY_CHARS, translation.py) normally stops
-# well before that, just past the free tier. Resets at midnight Pacific
-# time (15:00 Vietnam time in winter, 14:00 in summer).
+# Daily hard cap = the busiest day so far scaled down by free/used: peak
+# 1,695,340 chars (2026-10-18) × 1,000,000 free / 10,082,841 used over
+# Oct–Nov 2026 (9.9%) ≈ 168k → 170,000 (~27 chapters). Reading is bursty, so
+# a flat average would block the heavy days; the monthly soft cap in
+# novel-web (GOOGLE_TRANSLATE_MONTHLY_CHARS, translation.py) is what keeps
+# the month just past the 500k free chars. Resets at midnight Pacific time
+# (15:00 Vietnam time in winter, 14:00 in summer).
 variable "translate_daily_char_limit" {
   description = "Cloud Translation characters per day for the whole project"
   type        = number
-  default     = 20000
+  default     = 170000
 }
 
 # Billing account is in VND — the Budget API requires the account currency.
