@@ -63,9 +63,9 @@ resource "google_cloud_quotas_quota_preference" "translate_daily_chars" {
   quota_id      = "DefaultPerDayPerProject"
   contact_email = var.billing_alert_email
   justification = "Cap Cloud Translation spend for a personal reading site."
-  # Going from unlimited to a cap is a >10% decrease, which the API refuses
-  # unless told it's intended.
-  ignore_safety_checks = "QUOTA_DECREASE_PERCENTAGE_TOO_HIGH"
+  # The cap is below recent daily usage (1.25M chars on 2026-11-20), which
+  # the API refuses unless told it's intended.
+  ignore_safety_checks = "QUOTA_DECREASE_BELOW_USAGE"
 
   quota_config {
     preferred_value = var.translate_daily_char_limit
