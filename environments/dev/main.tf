@@ -441,6 +441,13 @@ resource "google_cloud_run_v2_service" "novel_web" {
         name  = "TTS_API_SECRET"
         value = var.tts_api_secret
       }
+      # Gemini engine of /api/translate — key of the billing-less
+      # tts-gemini-free-yl project, so only the free tier can ever be used
+      # (see billing.tf).
+      env {
+        name  = "GEMINI_API_KEY"
+        value = var.gemini_api_key
+      }
 
       resources {
         limits = {

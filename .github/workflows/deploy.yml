@@ -3,7 +3,7 @@
 #
 # Auth is keyless (Workload Identity Federation, environments/dev/ci.tf).
 # Repo variables: GCP_PROJECT_ID, GCP_WIF_PROVIDER, GCP_TERRAFORM_SA.
-# Repo secrets:   TTS_API_SECRET, WEB_AUTH_USER, WEB_AUTH_PASS, SESSION_SECRET.
+# Repo secrets:   TTS_API_SECRET, WEB_AUTH_USER, WEB_AUTH_PASS, SESSION_SECRET, GEMINI_API_KEY.
 name: deploy
 
 on:
@@ -33,6 +33,7 @@ env:
   TF_VAR_web_auth_user: ${{ secrets.WEB_AUTH_USER }}
   TF_VAR_web_auth_pass: ${{ secrets.WEB_AUTH_PASS }}
   TF_VAR_session_secret: ${{ secrets.SESSION_SECRET }}
+  TF_VAR_gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
 
 jobs:
   changes:

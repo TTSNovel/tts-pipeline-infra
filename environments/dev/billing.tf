@@ -8,6 +8,10 @@
 #     can't run up more than a known amount (over the cap Google answers 429
 #     and the web reader shows the error / falls back to another engine);
 #   - a monthly budget that emails at 50% / 90% / 100%.
+# The Gemini engine needs neither: its key lives in tts-gemini-free-yl, a
+# project with no billing account, so it can only use the free tier —
+# Google's own free limits (15 req/min, 500 req/day for
+# gemini-3.5-flash-lite) are the hard cap and there is nothing to bill.
 #
 # Chicken-and-egg like ci.tf: the budget lives on the billing account, not
 # the project, so github-terraform needs roles/billing.costsManager there.
@@ -29,19 +33,22 @@ variable "billing_alert_email" {
   default     = "yanglong.ph@gmail.com"
 }
 
-# ~30 new chapters/day (~105,000 VND/day at most). Resets at midnight
-# Pacific time (15:00 Vietnam time in winter, 14:00 in summer).
+# Hard cap, ~3 new chapters/day: at most ~600k chars/month, i.e. at most
+# ~100k past the 500k free chars (~52,000 VND). The monthly soft cap in
+# novel-web (GOOGLE_TRANSLATE_MONTHLY_CHARS, translation.py) normally stops
+# well before that, just past the free tier. Resets at midnight Pacific
+# time (15:00 Vietnam time in winter, 14:00 in summer).
 variable "translate_daily_char_limit" {
   description = "Cloud Translation characters per day for the whole project"
   type        = number
-  default     = 200000
+  default     = 20000
 }
 
 # Billing account is in VND — the Budget API requires the account currency.
 variable "monthly_budget_vnd" {
   description = "Monthly budget for this project, in VND"
   type        = number
-  default     = 1000000
+  default     = 200000
 }
 
 resource "google_project_service" "billing_apis" {
