@@ -216,6 +216,11 @@ resource "google_cloud_run_v2_service" "tts_generate" {
         name  = "TTS_API_SECRET"
         value = var.tts_api_secret
       }
+      # google_tts monthly character counter (src/tts-generate/usage_cap.py)
+      env {
+        name  = "USAGE_BUCKET"
+        value = google_storage_bucket.tts_assets.name
+      }
 
       resources {
         limits = {
@@ -250,6 +255,14 @@ resource "google_cloud_run_v2_service" "tts_generate" {
   lifecycle {
     ignore_changes = [template[0].containers[0].image, client, client_version]
   }
+}
+
+# tts-generate runs as the default compute SA and keeps its google_tts
+# monthly character counter (usage/google_tts.json) in tts_assets.
+resource "google_storage_bucket_iam_member" "tts_generate_usage_rw" {
+  bucket = google_storage_bucket.tts_assets.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "public_invoker" {

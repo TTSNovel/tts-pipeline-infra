@@ -21,6 +21,7 @@ COPY piper_models/ piper_models/
 COPY vi_syllables.txt .
 COPY lang_segment.py .
 COPY transliterate.py .
+COPY usage_cap.py .
 COPY main.py .
 
 # Cloud Run sets $PORT at runtime (defaults to 8080 locally). Single worker:
