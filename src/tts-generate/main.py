@@ -51,6 +51,7 @@ from piper.voice import PiperVoice
 
 from lang_segment import segment_by_language
 from transliterate import transliterate_text
+import usage_cap
 
 TTS_API_SECRET = os.environ["TTS_API_SECRET"]
 
@@ -86,7 +87,7 @@ VIENEU_VOICE = os.environ.get("VIENEU_VOICE", "Đoan Trang")
 VIENEU_STYLE = os.environ.get("VIENEU_STYLE", "tu_nhien")
 
 app = Flask(__name__)
-CORS(app, resources={r"/tts/*": {"origins": "*"}}, allow_headers=["Content-Type", "x-tts-secret"])
+CORS(app, resources={r"/tts/*": {"origins": "*"}}, allow_headers=["Content-Type", "x-tts-secret"], expose_headers=["X-TTS-Fallback"])
 
 # Lazy-loaded PER LANGUAGE, not eagerly for the whole registry — same
 # cold-start reasoning as the single-voice version, extended: a pure-
@@ -331,6 +332,14 @@ def generate():
 
     print(f"tts-generate: model={model} speed={speed}: {text[:60]}", flush=True)
 
+    # Past this month's Google TTS character cap (usage_cap.py) the request
+    # is read by the default Piper voice instead of failing, so reading
+    # keeps going at $0; the header lets a client tell the two apart.
+    fallback_headers = {}
+    if model == "google_tts" and not usage_cap.charge(len(text)):
+        model = DEFAULT_MODEL
+        fallback_headers = {"X-TTS-Fallback": "google_tts monthly limit reached"}
+
     if model in ("google_tts", "vieneu"):
         try:
             if model == "google_tts":
@@ -375,7 +384,7 @@ def generate():
     buf = io.BytesIO()
     sf.write(buf, wav, sample_rate, format="wav", subtype="PCM_16")
 
-    return buf.getvalue(), 200, {"Content-Type": "audio/wav"}
+    return buf.getvalue(), 200, {"Content-Type": "audio/wav", **fallback_headers}
 
 
 if __name__ == "__main__":
