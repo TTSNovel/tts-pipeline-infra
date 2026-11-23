@@ -124,11 +124,46 @@ resource "google_artifact_registry_repository" "tts_pipeline" {
   repository_id = "tts-pipeline"
   format        = "DOCKER"
 
+  # A KEEP rule alone deletes nothing — the repo had grown to ~36 GB
+  # (~87,000 VND/month), mostly old tts-gpu CUDA images (5–13 GB each).
+  # Anything older than 7 days is deleted unless a KEEP rule below matches
+  # (KEEP always wins over DELETE). tts-gpu and tts-generate run :latest,
+  # which isn't always their newest version, so that tag is kept explicitly.
   cleanup_policies {
-    id     = "keep-last-10"
+    id     = "delete-older-than-7d"
+    action = "DELETE"
+    condition {
+      tag_state  = "ANY"
+      older_than = "7d"
+    }
+  }
+
+  cleanup_policies {
+    id     = "keep-latest-tag"
+    action = "KEEP"
+    condition {
+      tag_state    = "TAGGED"
+      tag_prefixes = ["latest"]
+    }
+  }
+
+  # Rollback headroom for the small images (novel-web rolls :<sha> per push).
+  cleanup_policies {
+    id     = "keep-last-5-apps"
     action = "KEEP"
     most_recent_versions {
-      keep_count = 10
+      package_name_prefixes = ["novel-web", "tts-generate"]
+      keep_count            = 5
+    }
+  }
+
+  # tts-gpu images are 5–13 GB each — keep only the newest besides :latest.
+  cleanup_policies {
+    id     = "keep-last-1-gpu"
+    action = "KEEP"
+    most_recent_versions {
+      package_name_prefixes = ["tts-gpu"]
+      keep_count            = 1
     }
   }
 
