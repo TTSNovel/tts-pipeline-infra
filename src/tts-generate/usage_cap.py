@@ -73,9 +73,15 @@ class UsageCounter:
     def _sync(self, month):
         own_name = self._shard(month)
         others = 0
-        for blob in self._get_bucket().list_blobs(prefix=f"{USAGE_PREFIX}/{month}/"):
+        bucket = self._get_bucket()
+        for blob in bucket.list_blobs(prefix=f"{USAGE_PREFIX}/{month}/"):
             if blob.name != own_name:
-                others += json.loads(blob.download_as_bytes()).get("chars", 0)
+                # Listed blobs carry their generation, and download_as_bytes()
+                # pins it — another instance rewriting its shard (every
+                # FLUSH_SECONDS) between list and download made that 404,
+                # failing closed and sending the sentence to Piper. Read the
+                # live object by name instead.
+                others += json.loads(bucket.blob(blob.name).download_as_bytes()).get("chars", 0)
         self._others, self._last_sync = others, self._clock()
 
     def _flush(self, force=False):
